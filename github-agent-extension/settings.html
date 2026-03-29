@@ -1,0 +1,68 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <link rel="stylesheet" href="settings.css">
+</head>
+<body>
+  <div class="settings-container">
+    <h1>⚙ Settings</h1>
+    
+    <div class="info-box">
+      <p>Keys are stored only in your local browser via chrome.storage.local</p>
+    </div>
+
+    <form id="settingsForm">
+      <div class="form-group">
+        <label for="aiProvider">AI Provider <span class="required">*</span></label>
+        <select id="aiProvider" class="provider-select">
+          <option value="anthropic">Anthropic Claude</option>
+          <option value="gemini">Google Gemini</option>
+        </select>
+        <p class="help-text">Choose your preferred AI provider</p>
+      </div>
+
+      <div class="form-group" id="anthropicKeyGroup">
+        <label for="anthropicKey">Anthropic API Key <span class="required">*</span></label>
+        <div class="input-wrapper">
+          <input type="password" id="anthropicKey" placeholder="sk-ant-...">
+          <button type="button" class="toggle-visibility" data-target="anthropicKey" aria-label="Toggle visibility">👁</button>
+        </div>
+        <p class="help-text">Get your key at <a href="https://console.anthropic.com/" target="_blank">console.anthropic.com</a></p>
+      </div>
+
+      <div class="form-group hidden" id="geminiKeyGroup">
+        <label for="geminiKey">Gemini API Key <span class="required">*</span></label>
+        <div class="input-wrapper">
+          <input type="password" id="geminiKey" placeholder="AIza...">
+          <button type="button" class="toggle-visibility" data-target="geminiKey" aria-label="Toggle visibility">👁</button>
+        </div>
+        <p class="help-text">Get your key at <a href="https://aistudio.google.com/app/apikey" target="_blank">aistudio.google.com</a></p>
+      </div>
+
+      <div class="form-group">
+        <label for="githubToken">GitHub Personal Access Token <span class="optional">(optional)</span></label>
+        <div class="input-wrapper">
+          <input type="password" id="githubToken" placeholder="ghp_...">
+          <button type="button" class="toggle-visibility" data-target="githubToken" aria-label="Toggle visibility">👁</button>
+        </div>
+        <p class="help-text">
+          Recommended: 5,000 req/hr vs 60 req/hr without token<br>
+          <a href="https://github.com/settings/tokens" target="_blank">Create one</a> → select repo scope (read-only)
+        </p>
+      </div>
+
+      <div id="errorMsg" class="error-msg hidden"></div>
+      <div id="successMsg" class="success-msg hidden">✓ Saved successfully</div>
+
+      <button type="submit" id="saveBtn" class="save-btn">Save</button>
+    </form>
+
+    <div class="footer">
+      <button id="clearDataBtn" class="link-btn">Clear all data</button>
+    </div>
+  </div>
+
+  <script src="settings.js"></script>
+</body>
+</html>

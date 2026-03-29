@@ -1,0 +1,48 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <link rel="stylesheet" href="popup.css">
+</head>
+<body>
+  <div id="app">
+    <header>
+      <div class="header-left">
+        <span class="logo">🔍</span>
+        <span class="title">RepoLens</span>
+      </div>
+      <button id="settingsBtn" class="icon-btn" aria-label="Settings">⚙</button>
+    </header>
+
+    <main id="mainContent">
+      <div id="inputState" class="state">
+        <input type="text" id="repoInput" placeholder="e.g. vercel/next.js" aria-label="GitHub repository">
+        <button id="analyzeBtn" class="primary-btn">Analyze</button>
+        <div id="cacheInfo" class="cache-info"></div>
+      </div>
+
+      <div id="loadingState" class="state hidden">
+        <div class="spinner"></div>
+        <div id="statusText" class="status-text" role="status" aria-live="polite"></div>
+      </div>
+
+      <div id="resultState" class="state hidden">
+        <div id="resultContent" class="result-content"></div>
+        <div class="action-buttons">
+          <button id="copyBtn" class="secondary-btn">Copy</button>
+          <button id="reanalyzeBtn" class="secondary-btn">Re-analyze</button>
+        </div>
+      </div>
+
+      <div id="errorState" class="state hidden">
+        <div class="error-icon">⚠️</div>
+        <div id="errorMessage" class="error-message"></div>
+        <button id="retryBtn" class="secondary-btn">Retry</button>
+      </div>
+    </main>
+  </div>
+
+  <script src="marked.min.js"></script>
+  <script src="popup.js"></script>
+</body>
+</html>
