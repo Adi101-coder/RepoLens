@@ -33,14 +33,14 @@ function init() {
     anthropicKey = result.anthropic_key;
     geminiKey = result.gemini_key;
     githubToken = result.github_token;
-    
+
     // If no AI key configured, redirect to settings
     if ((aiProvider === 'anthropic' && !anthropicKey) || (aiProvider === 'gemini' && !geminiKey)) {
       chrome.runtime.openOptionsPage();
       return;
     }
   });
-  
+
   // Detect GitHub repo from current tab
   chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
     if (tabs[0]) {
@@ -53,14 +53,14 @@ function init() {
       }
     }
   });
-  
+
   // Event listeners
   analyzeBtn.addEventListener('click', startAnalysis);
   settingsBtn.addEventListener('click', () => chrome.runtime.openOptionsPage());
   copyBtn.addEventListener('click', copyToClipboard);
   reanalyzeBtn.addEventListener('click', startAnalysis);
   retryBtn.addEventListener('click', startAnalysis);
-  
+
   repoInput.addEventListener('keypress', (e) => {
     if (e.key === 'Enter') startAnalysis();
   });
@@ -73,7 +73,7 @@ function checkCache(repo) {
       const { timestamp } = result[cacheKey];
       const age = Date.now() - timestamp;
       const minutes = Math.floor(age / 60000);
-      
+
       if (minutes < 15) {
         cacheInfo.textContent = `Last analyzed: ${minutes} min ago`;
       }
@@ -83,19 +83,19 @@ function checkCache(repo) {
 
 async function startAnalysis() {
   if (analysisInProgress) return;
-  
+
   const repoStr = normalizeRepoInput(repoInput.value.trim());
   if (!repoStr) {
     showError("That doesn't look like a valid GitHub repo. Try: owner/repo");
     return;
   }
-  
+
   currentRepo = repoStr;
   analysisInProgress = true;
-  
+
   showState('loading');
   updateStatus('⚙ Starting analysis...');
-  
+
   try {
     await runAgentLoop(currentRepo);
   } catch (error) {
@@ -107,41 +107,41 @@ async function startAnalysis() {
 
 function normalizeRepoInput(input) {
   if (!input) return null;
-  
+
   // Handle full GitHub URLs
   const urlMatch = input.match(/github\.com\/([^/]+)\/([^/?\s#.]+)/);
   if (urlMatch) {
     return `${urlMatch[1]}/${urlMatch[2]}`;
   }
-  
+
   // Handle owner/repo format
   const repoMatch = input.match(/^([^/\s]+)\/([^/\s]+)$/);
   if (repoMatch) {
     return input;
   }
-  
+
   return null;
 }
 
 async function runAgentLoop(repo) {
   const [owner, repoName] = repo.split('/');
-  
+
   const messages = [{
     role: 'user',
     content: `Analyze: ${repo}`
   }];
-  
+
   let iterations = 0;
   const maxIterations = 8;
   let finalSummary = '';
-  
+
   while (iterations < maxIterations) {
     iterations++;
-    
-    const response = aiProvider === 'gemini' 
+
+    const response = aiProvider === 'gemini'
       ? await callGemini(messages, owner, repoName)
       : await callClaude(messages);
-    
+
     if (response.stop_reason === 'end_turn') {
       // Extract text content
       const textBlock = response.content.find(block => block.type === 'text');
@@ -150,14 +150,14 @@ async function runAgentLoop(repo) {
       }
       break;
     }
-    
+
     if (response.stop_reason === 'tool_use') {
       // Add assistant message
       messages.push({
         role: 'assistant',
         content: response.content
       });
-      
+
       // Process tool calls
       const toolResults = [];
       for (const block of response.content) {
@@ -170,28 +170,28 @@ async function runAgentLoop(repo) {
           });
         }
       }
-      
+
       // Add tool results
       messages.push({
         role: 'user',
         content: toolResults
       });
-      
+
       continue;
     }
-    
+
     // Unknown stop reason
     break;
   }
-  
+
   if (!finalSummary && iterations >= maxIterations) {
     throw new Error('Analysis took too long. Please try again.');
   }
-  
+
   if (!finalSummary) {
     throw new Error('No summary generated. Please try again.');
   }
-  
+
   // Cache the result
   const cacheKey = `cache_${repo.replace('/', '_')}`;
   chrome.storage.local.set({
@@ -200,7 +200,7 @@ async function runAgentLoop(repo) {
       timestamp: Date.now()
     }
   });
-  
+
   // Render result
   showResult(finalSummary);
 }
@@ -222,7 +222,7 @@ async function callClaude(messages) {
       messages: messages
     })
   });
-  
+
   if (!response.ok) {
     if (response.status === 401) {
       throw new Error('Your Anthropic API key looks invalid. Check it in settings.');
@@ -232,37 +232,57 @@ async function callClaude(messages) {
     }
     throw new Error(`Anthropic API error: ${response.status}`);
   }
-  
+
   return await response.json();
 }
 
 async function callGemini(messages, owner, repo) {
-  // Gemini uses function calling, convert messages to Gemini format
-  const geminiMessages = convertMessagesToGemini(messages);
-  
-  // Check if we need to call tools
+  // For Gemini, we'll handle tool calls manually instead of using function calling
   const lastMessage = messages[messages.length - 1];
-  const needsTools = lastMessage.role === 'user' && !lastMessage.content[0]?.type;
-  
-  if (needsTools) {
-    // First call - get tool calls from Gemini
+
+  // Check if this is the initial request
+  if (lastMessage.role === 'user' && typeof lastMessage.content === 'string') {
+    // Initial request - manually call all tools and then ask Gemini to summarize
+    updateStatus('⚙ Fetching repo info...');
+    const repoInfo = await getRepoInfo(owner, repo);
+
+    updateStatus('⚙ Loading recent commits...');
+    const commits = await getRecentCommits(owner, repo, 30);
+
+    updateStatus('⚙ Loading merged PRs...');
+    const prs = await getMergedPRs(owner, repo, 20);
+
+    updateStatus('🤖 Gemini is analyzing...');
+
+    // Build a comprehensive prompt with all the data
+    const prompt = `${getSystemPrompt()}
+
+Repository: ${owner}/${repo}
+
+REPOSITORY INFO:
+${JSON.stringify(repoInfo, null, 2)}
+
+RECENT COMMITS (${commits.length} commits):
+${JSON.stringify(commits, null, 2)}
+
+MERGED PULL REQUESTS (${prs.length} PRs):
+${JSON.stringify(prs, null, 2)}
+
+Now analyze this repository and provide a structured markdown summary following the exact format specified in the system prompt.`;
+
     const response = await fetch(
-      `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${geminiKey}`,
+      `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${geminiKey}`,
       {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          contents: geminiMessages,
-          systemInstruction: { parts: [{ text: getSystemPrompt() }] },
-          tools: [{ functionDeclarations: getGeminiTools() }],
-          generationConfig: {
-            temperature: 0.7,
-            maxOutputTokens: 4096
-          }
+          contents: [{
+            parts: [{ text: prompt }]
+          }]
         })
       }
     );
-    
+
     if (!response.ok) {
       if (response.status === 401 || response.status === 403) {
         throw new Error('Your Gemini API key looks invalid. Check it in settings.');
@@ -270,48 +290,30 @@ async function callGemini(messages, owner, repo) {
       if (response.status === 429) {
         throw new Error("You've hit your Gemini usage limit. Check your quota at aistudio.google.com.");
       }
-      throw new Error(`Gemini API error: ${response.status}`);
+      const errorText = await response.text();
+      console.error('Gemini API error details:', errorText);
+      throw new Error(`Gemini API error: ${response.status} - ${errorText.substring(0, 200)}`);
     }
-    
+
     const data = await response.json();
-    
-    // Convert Gemini response to Claude format
-    return convertGeminiResponse(data, owner, repo);
-  } else {
-    // Subsequent call with tool results - get final answer
-    const response = await fetch(
-      `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${geminiKey}`,
-      {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          contents: geminiMessages,
-          systemInstruction: { parts: [{ text: getSystemPrompt() }] },
-          generationConfig: {
-            temperature: 0.7,
-            maxOutputTokens: 4096
-          }
-        })
-      }
-    );
-    
-    if (!response.ok) {
-      throw new Error(`Gemini API error: ${response.status}`);
-    }
-    
-    const data = await response.json();
-    const text = data.candidates?.[0]?.content?.parts?.[0]?.text || '';
-    
+    const text = data.candidates?.[0]?.content?.parts?.[0]?.text || 'No response generated';
+
     return {
       stop_reason: 'end_turn',
       content: [{ type: 'text', text }]
     };
   }
+
+  // This shouldn't happen with our simplified approach
+  return {
+    stop_reason: 'end_turn',
+    content: [{ type: 'text', text: 'Error: Unexpected message format' }]
+  };
 }
 
 function convertMessagesToGemini(messages) {
   const geminiMessages = [];
-  
+
   for (const msg of messages) {
     if (msg.role === 'user') {
       if (typeof msg.content === 'string') {
@@ -353,7 +355,7 @@ function convertMessagesToGemini(messages) {
       }
     }
   }
-  
+
   return geminiMessages;
 }
 
@@ -362,10 +364,10 @@ function convertGeminiResponse(data, owner, repo) {
   if (!candidate) {
     return { stop_reason: 'end_turn', content: [{ type: 'text', text: 'No response from Gemini' }] };
   }
-  
+
   const parts = candidate.content?.parts || [];
   const content = [];
-  
+
   for (const part of parts) {
     if (part.text) {
       content.push({ type: 'text', text: part.text });
@@ -378,9 +380,9 @@ function convertGeminiResponse(data, owner, repo) {
       });
     }
   }
-  
+
   const hasToolCalls = content.some(c => c.type === 'tool_use');
-  
+
   return {
     stop_reason: hasToolCalls ? 'tool_use' : 'end_turn',
     content
@@ -445,7 +447,7 @@ function getGeminiTools() {
 
 async function executeToolCall(toolName, input, owner, repo) {
   updateStatus(`⚙ ${toolName}...`);
-  
+
   switch (toolName) {
     case 'get_repo_info':
       return await getRepoInfo(input.owner, input.repo);
@@ -469,6 +471,7 @@ async function getRepoInfo(owner, repo) {
     stargazers_count: response.stargazers_count,
     forks_count: response.forks_count,
     pushed_at: response.pushed_at,
+    pushed_at_relative: formatRelativeTime(response.pushed_at),
     open_issues_count: response.open_issues_count,
     default_branch: response.default_branch
   };
@@ -476,20 +479,42 @@ async function getRepoInfo(owner, repo) {
 
 async function getRecentCommits(owner, repo, limit) {
   const response = await githubFetch(`/repos/${owner}/${repo}/commits?per_page=${Math.min(limit, 100)}`);
-  
+
   return response
     .filter(commit => !isBot(commit.commit.author.name, commit.commit.author.email))
     .map(commit => ({
       sha: commit.sha.substring(0, 7),
       author: commit.commit.author.name,
       date: commit.commit.author.date,
+      date_relative: formatRelativeTime(commit.commit.author.date),
       message: commit.commit.message.split('\n')[0]
     }));
 }
 
+function formatRelativeTime(dateString) {
+  const date = new Date(dateString);
+  const now = new Date();
+  const diffMs = now - date;
+  const diffSecs = Math.floor(diffMs / 1000);
+  const diffMins = Math.floor(diffSecs / 60);
+  const diffHours = Math.floor(diffMins / 60);
+  const diffDays = Math.floor(diffHours / 24);
+  const diffWeeks = Math.floor(diffDays / 7);
+  const diffMonths = Math.floor(diffDays / 30);
+  const diffYears = Math.floor(diffDays / 365);
+  
+  if (diffSecs < 60) return 'just now';
+  if (diffMins < 60) return `${diffMins} minute${diffMins !== 1 ? 's' : ''} ago`;
+  if (diffHours < 24) return `${diffHours} hour${diffHours !== 1 ? 's' : ''} ago`;
+  if (diffDays < 7) return `${diffDays} day${diffDays !== 1 ? 's' : ''} ago`;
+  if (diffWeeks < 4) return `${diffWeeks} week${diffWeeks !== 1 ? 's' : ''} ago`;
+  if (diffMonths < 12) return `${diffMonths} month${diffMonths !== 1 ? 's' : ''} ago`;
+  return `${diffYears} year${diffYears !== 1 ? 's' : ''} ago`;
+}
+
 async function getMergedPRs(owner, repo, limit) {
   const response = await githubFetch(`/repos/${owner}/${repo}/pulls?state=closed&per_page=${limit}&sort=updated&direction=desc`);
-  
+
   return response
     .filter(pr => pr.merged_at)
     .map(pr => ({
@@ -497,6 +522,7 @@ async function getMergedPRs(owner, repo, limit) {
       title: pr.title,
       user: pr.user.login,
       merged_at: pr.merged_at,
+      merged_at_relative: formatRelativeTime(pr.merged_at),
       html_url: pr.html_url,
       body: (pr.body || '').substring(0, 600)
     }));
@@ -504,7 +530,7 @@ async function getMergedPRs(owner, repo, limit) {
 
 async function getPRFiles(owner, repo, prNumber) {
   const response = await githubFetch(`/repos/${owner}/${repo}/pulls/${prNumber}/files?per_page=50`);
-  
+
   return response.map(file => ({
     filename: file.filename,
     status: file.status,
@@ -517,19 +543,19 @@ async function githubFetch(endpoint) {
   const headers = {
     'Accept': 'application/vnd.github.v3+json'
   };
-  
+
   if (githubToken) {
     headers['Authorization'] = `token ${githubToken}`;
   }
-  
+
   const response = await fetch(`https://api.github.com${endpoint}`, { headers });
-  
+
   // Check rate limit
   const remaining = response.headers.get('X-RateLimit-Remaining');
   if (remaining && parseInt(remaining) < 5) {
     console.warn('GitHub rate limit almost reached');
   }
-  
+
   if (!response.ok) {
     if (response.status === 404) {
       throw new Error('Repo not found. It may be private or the URL may be wrong.');
@@ -539,18 +565,18 @@ async function githubFetch(endpoint) {
     }
     throw new Error(`GitHub API error: ${response.status}`);
   }
-  
+
   return await response.json();
 }
 
 function isBot(name, email) {
   const botNames = ['dependabot', 'renovate', 'github-actions', 'greenkeeper'];
   const nameLower = name.toLowerCase();
-  
+
   if (botNames.some(bot => nameLower.includes(bot))) return true;
   if (name.includes('[bot]')) return true;
   if (email && email.includes('@users.noreply.github.com') && botNames.some(bot => email.includes(bot))) return true;
-  
+
   return false;
 }
 
@@ -672,12 +698,12 @@ function showError(message) {
 function handleError(error) {
   console.error('Analysis error:', error);
   let message = error.message || 'An unexpected error occurred. Please try again.';
-  
+
   // Add settings button for API key errors
   if (message.includes('API key')) {
     message += '\n\nClick the gear icon (⚙) to update your settings.';
   }
-  
+
   showError(message);
 }
 
@@ -690,7 +716,7 @@ function showState(state) {
   loadingState.classList.add('hidden');
   resultState.classList.add('hidden');
   errorState.classList.add('hidden');
-  
+
   switch (state) {
     case 'input':
       inputState.classList.remove('hidden');
